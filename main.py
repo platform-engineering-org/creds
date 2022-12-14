@@ -14,7 +14,7 @@ DOWNLOAD_PATH = 'AWSLogs/203972369401/CloudTrail/eu-west-2/2022/12/13/'
 def download_items(bucket_name: str, download_path: pathlib.Path) -> None:
     """Prints to console the content of all json files are fount at download_path
 
-    Args:
+    Params:
         bucket_name (str): The name of the bucket
         download_path (pathlib.Path): The path in the bucket we want to get the content of the json files from
 
@@ -37,7 +37,15 @@ def download_items(bucket_name: str, download_path: pathlib.Path) -> None:
 
         with gzip.open(file_name, "rb") as f:
             data = json.loads(f.read().decode("ascii"))
-            print(data)
+
+            for _, list in data.items():
+                for value in list:
+                    if value["userIdentity"]["type"] == 'AssumedRole':
+                        print('role')
+                        break
+                    if value["userIdentity"]["type"] == 'IAMUser':
+                        print('creds')
+                        break
 
         os.remove(file_name)
 
