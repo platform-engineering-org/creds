@@ -2,7 +2,11 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 4.41"
+      version = "4.45.0"
+    }
+    random = {
+      source  = "hashicorp/random"
+      version = "3.4.3"
     }
   }
 
@@ -16,59 +20,75 @@ provider "aws" {
   }
 }
 
-data "aws_caller_identity" "current" {}
 
-resource "aws_cloudtrail" "creds" {
-  name           = "tf-creds-trail"
-  depends_on     = [aws_s3_bucket_policy.CloudTrailS3BucketPolicy]
-  s3_bucket_name = aws_s3_bucket.CloudTrailS3Bucket.id
-  advanced_event_selector {
-    name = "Log readOnly and writeOnly management events"
-
-    field_selector {
-      field  = "eventCategory"
-      equals = ["Management"]
-    }
-  }
+resource "random_id" "server" {
+  byte_length = 8
 }
 
-resource "aws_s3_bucket" "CloudTrailS3Bucket" {
-  bucket        = "tf-creds-trail"
-  force_destroy = true
+resource "aws_cloudtrail_event_data_store" "cloudtrail_event_data_store" {
+  name                           = "tf-creds-cloudtrail-eds-${random_id.server.hex}"
+  termination_protection_enabled = false
+  multi_region_enabled           = true
+  retention_period               = 7
 }
 
-resource "aws_s3_bucket_policy" "CloudTrailS3BucketPolicy" {
-  bucket     = aws_s3_bucket.CloudTrailS3Bucket.id
-  depends_on = [aws_s3_bucket.CloudTrailS3Bucket]
-  policy = jsonencode({
+output "cloudtrail_event_data_store_id" {
+  value = aws_cloudtrail_event_data_store.cloudtrail_event_data_store.arn
+}
+
+
+resource "aws_iam_role" "iam_role" {
+  name = "tf-creds-iam-role"
+  assume_role_policy = jsonencode({
     "Version" : "2012-10-17",
     "Statement" : [
       {
-        "Sid" : "AWSCloudTrailAclCheck",
+        "Sid" : "",
         "Effect" : "Allow",
         "Principal" : {
-          "Service" : "cloudtrail.amazonaws.com"
+          "Service" : "lambda.amazonaws.com"
         },
-        "Action" : "s3:GetBucketAcl",
-        "Resource" : "arn:aws:s3:::${aws_s3_bucket.CloudTrailS3Bucket.bucket}"
-      },
-      {
-        "Sid" : "AWSCloudTrailWrite",
-        "Effect" : "Allow",
-        "Principal" : {
-          "Service" : "cloudtrail.amazonaws.com"
-        },
-        "Action" : "s3:PutObject",
-        "Resource" : [
-          "arn:aws:s3:::tf-creds-trail/AWSLogs/${data.aws_caller_identity.current.account_id}/*"
-        ],
-        "Condition" : {
-          "StringEquals" : {
-            "s3:x-amz-acl" : "bucket-owner-full-control"
-          }
-        }
+        "Action" : "sts:AssumeRole"
       }
     ]
-    }
-  )
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "iam_role_policy_attachment" {
+  for_each = toset([
+    "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
+    "arn:aws:iam::aws:policy/AWSCloudTrail_FullAccess",
+  ])
+  role       = aws_iam_role.iam_role.name
+  policy_arn = each.value
+}
+
+resource "aws_lambda_function" "lambda_function" {
+  filename      = "lambda_function_payload.zip"
+  function_name = "start_query"
+  role          = aws_iam_role.iam_role.arn
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.9"
+}
+
+resource "aws_cloudwatch_event_rule" "cloudwatch_event_rule" {
+  name                = "tf-creds-cloudwatch-event-rule"
+  description         = "Trigger lanbda query once a day"
+  schedule_expression = "rate(1 day)"
+}
+
+resource "aws_cloudwatch_event_target" "cloudwatch_event_target" {
+  arn  = aws_lambda_function.lambda_function.arn
+  rule = aws_cloudwatch_event_rule.cloudwatch_event_rule.id
+  input = jsonencode({
+    "eds-urn" : aws_cloudtrail_event_data_store.cloudtrail_event_data_store.arn
+  })
+}
+
+resource "aws_lambda_permission" "lambda_permission" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.lambda_function.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.cloudwatch_event_rule.arn
 }

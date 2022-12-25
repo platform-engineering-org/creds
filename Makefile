@@ -1,16 +1,20 @@
-.PHONY: infra-plan infra-apply up down
+.PHONY: bootstrap-plan bootstrap up down
 
 AWS_REGION := $(shell aws configure get region)
 
 
-infra-plan:
+bootstrap-plan:
 	terraform -chdir=infra init
 	terraform -chdir=infra plan -var "user=${USER}" -var "aws_region=${AWS_REGION}"
 
-infra-apply:
+bootstrap:
 	-terraform -chdir=infra apply -auto-approve -var "user=${USER}" -var "aws_region=${AWS_REGION}"
 
-up: infra-apply
+infra/lambda_function_payload.zip: $(wildcard infra/lambda/*)
+	zip -j -r $@ infra/lambda/*
+
+up: infra/lambda_function_payload.zip bootstrap
 
 down:
 	terraform -chdir=infra destroy -auto-approve -var "user=${USER}" -var "aws_region=${AWS_REGION}"
+	rm -rf infra/lambda_function_payload.zip
