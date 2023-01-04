@@ -20,7 +20,6 @@ provider "aws" {
   }
 }
 
-
 resource "random_id" "server" {
   byte_length = 8
 }
@@ -31,11 +30,6 @@ resource "aws_cloudtrail_event_data_store" "cloudtrail_event_data_store" {
   multi_region_enabled           = true
   retention_period               = 7
 }
-
-output "cloudtrail_event_data_store_id" {
-  value = aws_cloudtrail_event_data_store.cloudtrail_event_data_store.arn
-}
-
 
 resource "aws_iam_role" "iam_role" {
   name = "tf-creds-iam-role"
@@ -58,6 +52,7 @@ resource "aws_iam_role_policy_attachment" "iam_role_policy_attachment" {
   for_each = toset([
     "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
     "arn:aws:iam::aws:policy/AWSCloudTrail_FullAccess",
+    "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
   ])
   role       = aws_iam_role.iam_role.name
   policy_arn = each.value
@@ -69,6 +64,28 @@ resource "aws_lambda_function" "lambda_function" {
   role          = aws_iam_role.iam_role.arn
   handler       = "lambda_function.lambda_handler"
   runtime       = "python3.9"
+  timeout       = 60
+}
+
+resource "aws_lambda_permission" "lambda_permission" {
+  statement_id  = "AllowExecutionFromCloudWatch"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.lambda_function.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.cloudwatch_event_rule.arn
+}
+
+resource "aws_dynamodb_table" "dynamodb_table" {
+  name             = "tf-creds-dynamodb-table"
+  billing_mode     = "PAY_PER_REQUEST"
+  hash_key         = "date"
+  stream_enabled   = true
+  stream_view_type = "NEW_IMAGE"
+
+  attribute {
+    name = "date"
+    type = "S"
+  }
 }
 
 resource "aws_cloudwatch_event_rule" "cloudwatch_event_rule" {
@@ -81,14 +98,7 @@ resource "aws_cloudwatch_event_target" "cloudwatch_event_target" {
   arn  = aws_lambda_function.lambda_function.arn
   rule = aws_cloudwatch_event_rule.cloudwatch_event_rule.id
   input = jsonencode({
-    "eds-urn" : aws_cloudtrail_event_data_store.cloudtrail_event_data_store.arn
+    "eds-arn" : aws_cloudtrail_event_data_store.cloudtrail_event_data_store.arn,
+    "table" : aws_dynamodb_table.dynamodb_table.name
   })
-}
-
-resource "aws_lambda_permission" "lambda_permission" {
-  statement_id  = "AllowExecutionFromCloudWatch"
-  action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.lambda_function.function_name
-  principal     = "events.amazonaws.com"
-  source_arn    = aws_cloudwatch_event_rule.cloudwatch_event_rule.arn
 }
