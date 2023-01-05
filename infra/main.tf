@@ -31,13 +31,12 @@ resource "aws_cloudtrail_event_data_store" "cloudtrail_event_data_store" {
   retention_period               = 7
 }
 
-resource "aws_iam_role" "iam_role" {
-  name = "tf-creds-iam-role"
+resource "aws_iam_role" "ddb_lambda_role" {
+  name = "tf-creds-ddb-lambda-iam-role"
   assume_role_policy = jsonencode({
     "Version" : "2012-10-17",
     "Statement" : [
       {
-        "Sid" : "",
         "Effect" : "Allow",
         "Principal" : {
           "Service" : "lambda.amazonaws.com"
@@ -54,14 +53,14 @@ resource "aws_iam_role_policy_attachment" "iam_role_policy_attachment" {
     "arn:aws:iam::aws:policy/AWSCloudTrail_FullAccess",
     "arn:aws:iam::aws:policy/AmazonDynamoDBFullAccess"
   ])
-  role       = aws_iam_role.iam_role.name
+  role       = aws_iam_role.ddb_lambda_role.name
   policy_arn = each.value
 }
 
 resource "aws_lambda_function" "lambda_function" {
   filename      = "lambda_function_payload.zip"
   function_name = "start_query"
-  role          = aws_iam_role.iam_role.arn
+  role          = aws_iam_role.ddb_lambda_role.arn
   handler       = "lambda_function.lambda_handler"
   runtime       = "python3.9"
   timeout       = 60
@@ -156,4 +155,50 @@ resource "aws_elasticsearch_domain_policy" "elasticsearch_domain_policy" {
         }
       ]
   })
+}
+
+resource "aws_iam_role" "opensearch_lambda_role" {
+  name = "tf-creds-opensearch-lambda-role"
+  assume_role_policy = jsonencode({
+    "Version" : "2012-10-17",
+    "Statement" : [
+      {
+        "Effect" : "Allow",
+        "Principal" : {
+          "Service" : "lambda.amazonaws.com"
+        },
+        "Action" : "sts:AssumeRole"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy" "opensearch_lambda_policy" {
+  name = "tf-creds-opensearch-lambda-policy"
+  policy = jsonencode({
+    "Version" : "2012-10-17",
+    "Statement" : [
+      {
+        "Effect" : "Allow",
+        "Action" : [
+          "es:ESHttpPost",
+          "es:ESHttpPut",
+          "dynamodb:DescribeStream",
+          "dynamodb:GetRecords",
+          "dynamodb:GetShardIterator",
+          "dynamodb:ListStreams",
+          "logs:CreateLogGroup",
+          "logs:CreateLogStream",
+          "logs:PutLogEvents"
+        ],
+        "Resource" : "*"
+      }
+    ]
+  })
+}
+
+resource "aws_iam_policy_attachment" "opensearch_lambda_policy_attachment" {
+  name       = "tf-creds-opensearch-lambda-policy-attachment"
+  roles      = [aws_iam_role.opensearch_lambda_role.name]
+  policy_arn = aws_iam_policy.opensearch_lambda_policy.arn
 }
