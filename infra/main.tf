@@ -57,8 +57,15 @@ resource "aws_iam_role_policy_attachment" "iam_role_policy_attachment" {
   policy_arn = each.value
 }
 
-resource "aws_lambda_function" "lambda_function" {
-  filename      = "lambda_function_payload.zip"
+data "archive_file" "cloudtrail-to-ddb" {
+  type        = "zip"
+  source_file = "${path.module}/lambda/cloudtrail-to-ddb/lambda_function.py"
+  output_path = "${path.module}/lambda/cloudtrail-to-ddb.zip"
+}
+
+
+resource "aws_lambda_function" "cloudtrail_to_ddb_function" {
+  filename      = "${path.module}/lambda/cloudtrail-to-ddb.zip"
   function_name = "start_query"
   role          = aws_iam_role.ddb_lambda_role.arn
   handler       = "lambda_function.lambda_handler"
@@ -69,7 +76,7 @@ resource "aws_lambda_function" "lambda_function" {
 resource "aws_lambda_permission" "lambda_permission" {
   statement_id  = "AllowExecutionFromCloudWatch"
   action        = "lambda:InvokeFunction"
-  function_name = aws_lambda_function.lambda_function.function_name
+  function_name = aws_lambda_function.cloudtrail_to_ddb_function.function_name
   principal     = "events.amazonaws.com"
   source_arn    = aws_cloudwatch_event_rule.cloudwatch_event_rule.arn
 }
@@ -94,7 +101,7 @@ resource "aws_cloudwatch_event_rule" "cloudwatch_event_rule" {
 }
 
 resource "aws_cloudwatch_event_target" "cloudwatch_event_target" {
-  arn  = aws_lambda_function.lambda_function.arn
+  arn  = aws_lambda_function.cloudtrail_to_ddb_function.arn
   rule = aws_cloudwatch_event_rule.cloudwatch_event_rule.id
   input = jsonencode({
     "eds-arn" : aws_cloudtrail_event_data_store.cloudtrail_event_data_store.arn,
@@ -201,4 +208,25 @@ resource "aws_iam_policy_attachment" "opensearch_lambda_policy_attachment" {
   name       = "tf-creds-opensearch-lambda-policy-attachment"
   roles      = [aws_iam_role.opensearch_lambda_role.name]
   policy_arn = aws_iam_policy.opensearch_lambda_policy.arn
+}
+
+data "archive_file" "ddb-to-opensearch" {
+  type        = "zip"
+  output_path = "${path.module}/lambda/ddb-to-opensearch.zip"
+  source_dir  = "${path.module}/lambda/ddb-to-opensearch/zip_dir"
+}
+
+resource "aws_lambda_function" "ddb-to-openserach_function" {
+  filename      = "${path.module}/lambda/ddb-to-opensearch.zip"
+  function_name = "stream_data"
+  role          = aws_iam_role.opensearch_lambda_role.arn
+  handler       = "lambda_function.lambda_handler"
+  runtime       = "python3.9"
+  timeout       = 60
+
+  environment {
+    variables = {
+      host = aws_elasticsearch_domain.elasticsearch_domain.domain_name
+    }
+  }
 }
