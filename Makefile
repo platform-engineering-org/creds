@@ -1,10 +1,12 @@
-.PHONY: bootstrap-plan bootstrap up down
+.PHONY: init plan bootstrap up down
 
 AWS_REGION := $(shell aws configure get region)
 
 
-bootstrap-plan:
+init:
 	terraform -chdir=infra init
+
+plan:
 	terraform -chdir=infra plan -var "user=${USER}" -var "aws_region=${AWS_REGION}"
 
 bootstrap:
